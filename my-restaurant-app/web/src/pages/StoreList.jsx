@@ -1,3 +1,4 @@
+// src/pages/StoreList.jsx
 import { useEffect, useMemo, useState } from "react";
 import {
   collection, getDocs, collectionGroup,
@@ -5,17 +6,15 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 
-// Haversine (km)
 function distanceKm(lat1, lon1, lat2, lon2) {
   if ([lat1, lon1, lat2, lon2].some(v => typeof v !== "number" || Number.isNaN(v)))
     return Infinity;
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat/2)**2 +
-    Math.cos((lat1*Math.PI)/180) * Math.cos((lat2*Math.PI)/180) *
-    Math.sin(dLon/2)**2;
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
+            Math.sin(dLon/2)**2;
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
@@ -23,8 +22,8 @@ export default function StoreList({ onOpenStore }) {
   const [stores, setStores] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [q, setQ] = useState("");         // ข้อความที่ผู้ใช้พิมพ์
-  const [queryText, setQueryText] = useState(""); // debounce แล้ว (พิมพ์หยุด 250ms)
+  const [q, setQ] = useState("");
+  const [queryText, setQueryText] = useState("");
   const [me, setMe] = useState({ lat: null, lng: null });
 
   // debounce
@@ -33,7 +32,7 @@ export default function StoreList({ onOpenStore }) {
     return () => clearTimeout(t);
   }, [q]);
 
-  // ขอพิกัด
+  // พิกัดผู้ใช้
   useEffect(() => {
     if (!("geolocation" in navigator)) return;
     navigator.geolocation.getCurrentPosition(
@@ -53,22 +52,21 @@ export default function StoreList({ onOpenStore }) {
     })();
   }, []);
 
-  // หา "เมนูที่ตรงคำค้น" ด้วย collectionGroup (prefix search)
-  const [menuHitsByRest, setMenuHitsByRest] = useState({}); // {restId: ['เมนู A', 'เมนู B', ...]}
+  // หาเมนูที่ตรงคำค้น
+  const [menuHitsByRest, setMenuHitsByRest] = useState({});
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!queryText || queryText.length < 1) {
+      if (!queryText) {
         setMenuHitsByRest({});
         return;
       }
-      // ค้นจากทุก subcollection ชื่อ "menus"
       const qMen = fsQuery(
         collectionGroup(db, "menus"),
         orderBy("name_lc"),
         startAt(queryText),
         endAt(queryText + "\uf8ff"),
-        limit(60) // กันผลลัพธ์เยอะเกิน (ปรับได้)
+        limit(60)
       );
       const snap = await getDocs(qMen);
       if (cancelled) return;
@@ -85,7 +83,7 @@ export default function StoreList({ onOpenStore }) {
     return () => { cancelled = true; };
   }, [queryText]);
 
-  // รวมระยะทาง + filter/จัดเรียง
+  // รวมและเรียง
   const list = useMemo(() => {
     const withDist = stores.map(r => ({
       ...r,
@@ -103,22 +101,32 @@ export default function StoreList({ onOpenStore }) {
       const matchMenu = (r._menuHits || []).some(n => (n || "").toLowerCase().includes(queryText));
       return matchBase || matchMenu;
     };
-
     const filtered = withDist.filter(byText);
 
-    // จัดเรียง: 1) มีเมนูตรง > ไม่มี  2) ระยะทาง  3) ชื่อ
     return filtered.sort((a, b) => {
       const aHit = a._menuHits.length ? 1 : 0;
       const bHit = b._menuHits.length ? 1 : 0;
-      if (aHit !== bHit) return bHit - aHit; // ที่มีเมนูตรงมาก่อนไม่มี
+      if (aHit !== bHit) return bHit - aHit;
       if (a._distance !== b._distance) return a._distance - b._distance;
       return String(a.name || "").localeCompare(String(b.name || ""));
     });
   }, [stores, me.lat, me.lng, queryText, menuHitsByRest]);
 
+  // click handler ปลอดภัย
+  const handleOpen = (id, e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    if (typeof onOpenStore === "function") {
+      console.log("[StoreList] click:", id);
+      onOpenStore(id);
+    } else {
+      console.warn("[StoreList] onOpenStore prop is not provided");
+    }
+  };
+
   return (
     <div style={{ maxWidth: 520, margin: "0 auto" }}>
-      {/* Search bar */}
+      {/* Search */}
       <div style={{
         display:"flex", alignItems:"center", gap:8, background:"#f5f5f7",
         borderRadius:14, padding:"10px 12px", marginBottom:12, position:"sticky", top:8, zIndex:2
@@ -136,15 +144,21 @@ export default function StoreList({ onOpenStore }) {
       {!loading && list.length === 0 && <div style={{opacity:.7}}>No result</div>}
 
       {list.map(r => {
-        const km =
-          r._distance === Infinity ? "-" : (Math.round(r._distance * 10) / 10).toFixed(1);
+        const km = r._distance === Infinity ? "-" : (Math.round(r._distance * 10) / 10).toFixed(1);
         const menuPreview = r._menuHits.slice(0, 3).join(", ");
         return (
-          <button
+          <div
             key={r.id}
-            onClick={()=>onOpenStore?.(r.id)}
+            role="button"
+            tabIndex={0}
             
-            style={{ width:"100%", textAlign:"left", border:"none", background:"transparent", marginBottom:12 }}
+            onClick={(e) => handleOpen(r.id, e)}
+            onKeyDown={(e)=>{ if (e.key==='Enter') handleOpen(r.id, e); }}
+            style={{
+              cursor:"pointer",
+              width:"100%", textAlign:"left",
+              background:"transparent", marginBottom:12
+            }}
           >
             <div style={{
               display:"grid", gridTemplateColumns:"80px 1fr", gap:12, padding:10,
@@ -154,7 +168,9 @@ export default function StoreList({ onOpenStore }) {
                 {r.image_url ? (
                   <img src={r.image_url} alt={r.name}
                        style={{width:"100%", height:"100%", objectFit:"cover"}}/>
-                ) : <div style={{width:"100%", height:"100%", display:"grid", placeItems:"center", color:"#999"}}>🖼️</div>}
+                ) : (
+                  <div style={{width:"100%", height:"100%", display:"grid", placeItems:"center", color:"#999"}}>🖼️</div>
+                )}
               </div>
               <div>
                 <div style={{fontWeight:700, marginBottom:4}}>{r.name}</div>
@@ -164,8 +180,6 @@ export default function StoreList({ onOpenStore }) {
                 <div style={{display:"flex", alignItems:"center", gap:6, marginTop:4, color:"#666", fontSize:13}}>
                   <span>📍</span><span>{km === "-" ? "-" : `${km} km`}</span>
                 </div>
-
-                {/* โชว์เมนูที่ตรงคำค้น (ถ้ามี) */}
                 {!!menuPreview && (
                   <div style={{marginTop:6, fontSize:12, color:"#444"}}>
                     <span style={{opacity:.7}}>menu: </span>{menuPreview}
@@ -174,7 +188,7 @@ export default function StoreList({ onOpenStore }) {
                 )}
               </div>
             </div>
-          </button>
+          </div>
         );
       })}
     </div>
