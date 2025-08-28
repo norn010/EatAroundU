@@ -1,35 +1,45 @@
-import React from "react";
 
-export default function Header({ title = "", user, onAvatarClick }) {
+export default function Header({ title, user, onAvatarClick }) {
   return (
-    <header>
-      {/* บรรทัด 1: Brand */}
-      <div style={{
-        background:"#111", color:"#fff", padding:"8px 12px",
-        display:"flex", alignItems:"center", justifyContent:"space-between"
-      }}>
-        <div>🍜 Eat Around You</div>
+    <header
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        background: "#111",
+        color: "white",
+        padding: "8px 16px",
+      }}
+    >
+      {/* ซ้าย: ชื่อระบบ + Title */}
+      <div>
+        <strong>🍜 Eat Around You</strong>
+        {title && <span style={{ marginLeft: 12 }}>{title}</span>}
       </div>
 
-      {/* บรรทัด 2: Page Title + Avatar */}
-      <div style={{
-        background:"#f7f7f7", color:"#222", padding:"10px 12px",
-        display:"flex", alignItems:"center", justifyContent:"space-between",
-        borderBottom:"1px solid #eee"
-      }}>
-        <div style={{fontWeight:600}}>{title}</div>
-        <button
-          onClick={onAvatarClick}
-          title={user?.email || "Profile"}
-          style={{
-            width:34, height:34, borderRadius:"50%", border:"1px solid #ddd",
-            background:"#fff", cursor:"pointer"
-          }}
-        >
-          {/* ไอคอนหน้าคนง่ายๆ */}
-          👤
-        </button>
-      </div>
+      {/* ขวา: user email + ประเภท */}
+      {user && (
+        <div style={{ fontSize: "0.9em" }}>
+          {user.email}{" "}
+          <span style={{ opacity: 0.7 }}>
+            ({user.user_type || "user"})
+          </span>
+        </div>
+      )}
+
+      {/* avatar ปุ่มเปิด sidebar */}
+      <button
+        onClick={onAvatarClick}
+        style={{
+          marginLeft: 12,
+          border: "none",
+          background: "transparent",
+          color: "white",
+          cursor: "pointer",
+        }}
+      >
+        ☰
+      </button>
     </header>
   );
 }

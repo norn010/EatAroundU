@@ -9,10 +9,13 @@ import RestaurantPage from "./pages/RestaurantPage";
 import MyQueuePage from "./pages/MyQueuePage";
 import AuthPage from "./pages/Auth";
 
-// ⬇️ เอาแค่ครั้งเดียว ไม่ซ้ำ
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth, db } from "./firebase";
 import { doc, getDoc } from "firebase/firestore";
+
+ import MyStoreList from "./pages/MyStoreList";
+ import StoreCreate from "./pages/StoreCreate";
+ import StoreList from "./pages/StoreList";
 
 export default function App() {
   // state เดิม
@@ -55,6 +58,8 @@ export default function App() {
     together: "together",
     ai: "AI Chat",
     setting: "Setting",
+    mystore: "My Store",  
+    store_new: "Create Store",
   };
 
   const go = (p) => {
@@ -102,6 +107,21 @@ export default function App() {
               <RestaurantPage id={restId} goBack={() => go("map")} />
             )}
             {page === "queue" && <MyQueuePage goRestaurant={(id)=>{ setRestId(id); go("rest"); }} />}
+              {page === "mystore" && (
+              <MyStoreList
+                user={user}
+                onNewStore={() => go("store_new")}
+                onOpenStore={(id) => { setRestId(id); go("rest"); }}
+              />
+            )}
+            {page === "store_new" && (
+              <StoreCreate
+                user={user}
+                onCreated={() => go("mystore")}
+                onCancel={() => go("mystore")}
+              />
+            )}
+            {page === "store" && <StoreList onOpenRestaurant={(id) => { setRestId(id); go("rest"); }} />}
             {page === "saved" && <div>Saved page here…</div>}
             {page === "profile" && <div>Profile page here…</div>}
             {page === "random" && <div>Random page here…</div>}
@@ -121,6 +141,7 @@ export default function App() {
       <Sidebar
         open={sidebarOpen}
         onClose={()=>setSidebarOpen(false)}
+        user={user}
         onAction={(id)=>{
           if (id === "logout") {
             setSidebarOpen(false);

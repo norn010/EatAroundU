@@ -19,5 +19,17 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if request.auth != null && request.auth.uid == uid;
     }
+    // อ่านร้านได้สาธารณะ
+    match /restaurants/{restId} {
+      allow read: if true;
+
+      // อนุญาตเขียนเฉพาะเจ้าของร้าน (owner_id ต้องเท่ากับ uid)
+      allow create: if request.auth != null
+                    && request.resource.data.owner_id == request.auth.uid;
+      allow update, delete: if request.auth != null
+                    && resource.data.owner_id == request.auth.uid;
+
+      // subcollections menus/tables ก็ทำคล้ายกันได้
+    }
   }
 }

@@ -1,26 +1,11 @@
-import React from "react";
-
-export default function Sidebar({ open, onClose, onAction }) {
+export default function Sidebar({ open, onClose, onAction, user }) {
   return (
     <>
-      {/* overlay คลิกปิด */}
-      {open && (
-        <div onClick={onClose}
-             style={{
-               position:"fixed", inset:0, background:"rgba(0,0,0,0.35)", zIndex:40
-             }}
-        />
-      )}
-      {/* ตัวแถบด้านข้าง */}
+      {open && <div className="app-overlay" onClick={onClose} />}
+
       <aside
-        className="app-sidebar"
-        style={{
-          left: open ? 0 : -280,
-          transition: "left .25s ease",
-          background: "#f2f2f2",
-          padding: "10px 12px",
-          boxShadow: "2px 0 10px rgba(0,0,0,.1)"
-        }}
+        className={`app-sidebar ${open ? "open" : ""}`}
+        onClick={(e) => e.stopPropagation()}  // กันคลิกทะลุ
       >
         <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:12}}>
           <div style={{
@@ -40,7 +25,6 @@ export default function Sidebar({ open, onClose, onAction }) {
           { id:"together", label:"together", icon:"👥" },
           { id:"ai", label:"AI Chat", icon:"🤖" },
           { id:"setting", label:"Setting", icon:"⚙️" },
-          { id:"logout", label:"Logout", icon:"🚪" },
         ].map(m => (
           <button key={m.id}
                   onClick={() => onAction?.(m.id)}
@@ -54,6 +38,30 @@ export default function Sidebar({ open, onClose, onAction }) {
           </button>
         ))}
 
+        {/* เฉพาะ owner */}
+        {user?.user_type === "owner" && (
+          <div style={{marginTop:14, borderTop:"1px solid #ddd", paddingTop:10}}>
+            <button
+              onClick={() => onAction?.("mystore")}
+              style={{
+                width:"100%", textAlign:"left", padding:"10px 8px",
+                border:"none", background:"transparent", display:"flex", gap:10,
+                alignItems:"center", borderRadius:8, cursor:"pointer", fontWeight:700
+              }}>
+              <span style={{fontSize:18}}>🏪</span>
+              <span>My Store</span>
+            </button>
+          </div>
+        )}
+
+        <div style={{marginTop:16}}>
+          <button
+            onClick={() => onAction?.("logout")}
+            style={{ width:"100%", padding:"10px 8px", borderRadius:8, border:"1px solid #ddd", background:"#fff" }}
+          >
+            🚪 Logout
+          </button>
+        </div>
       </aside>
     </>
   );
