@@ -134,7 +134,7 @@ export default function MapPage({ onOpenRestaurant, setTitle }) {
     <MapContainer
       center={center}
       zoom={15}
-      style={{ height: 420, width: "100%", borderRadius: 12, overflow: "hidden" }}
+      style={{ height: 700, width: "100%", borderRadius: 12, overflow: "hidden" }}
       whenCreated={(m) => (mapRef.current = m)}
     >
       <TileLayer
