@@ -1,22 +1,16 @@
-// web/src/pages/StoreEdit.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { db } from "../firebase";
+import { db, storage } from "../firebase";
 import {
-  doc,
-  getDoc,
-  updateDoc,
-  collection,
-  addDoc,
-  deleteDoc,
-  getDocs,
+  doc, getDoc, updateDoc,
+  collection, addDoc, deleteDoc, getDocs,
   serverTimestamp,
 } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// Fix leaflet icon
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -38,12 +32,12 @@ function CenterSync({ onCenter }) {
   return null;
 }
 
-/**
- * props:
- *   id: restaurant id
- *   onSaved: (id) => void
- *   onCancel: () => void
- */
+async function uploadTo(path, file) {
+  const r = ref(storage, path);
+  await uploadBytes(r, file);
+  return await getDownloadURL(r);
+}
+
 export default function StoreEdit({ id, onSaved, onCancel }) {
   const [center, setCenter] = useState([14.8907, 102.158]);
   const [name, setName] = useState("");
@@ -52,18 +46,20 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
   const [close, setClose] = useState("20:00");
   const [price, setPrice] = useState("฿฿");
   const [desc, setDesc] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
 
-  // เมนู: เก็บ id ด้วย เพื่อรู้ว่าตัวไหนเป็นของเดิม
-  const [menus, setMenus] = useState([]); // {id?, name, price, description, calories}
+  // รูปร้าน (ปก)
+  const [imageUrl, setImageUrl] = useState("");
+  const [coverFile, setCoverFile] = useState(null);
+  const [coverPreview, setCoverPreview] = useState("");
+
+  // เมนู
+  const [menus, setMenus] = useState([]); // {id?, name, price, description, calories, image_url?, file?, preview?}
   const [removedMenuIds, setRemovedMenuIds] = useState([]);
 
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState("");
-
   const mapRef = useRef(null);
 
-  // โหลดข้อมูลร้าน+เมนู
   useEffect(() => {
     (async () => {
       try {
@@ -91,7 +87,6 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
           }, 200);
         }
 
-        // โหลดเมนูเดิม
         const msnap = await getDocs(collection(db, "restaurants", id, "menus"));
         const mm = msnap.docs.map((m) => ({ id: m.id, ...m.data() }));
         setMenus(
@@ -101,6 +96,9 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
             price: x.price ?? "",
             description: x.description || "",
             calories: x.calories ?? "",
+            image_url: x.image_url || "",
+            file: null,
+            preview: "",
           }))
         );
       } catch (e) {
@@ -112,17 +110,22 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
   }, [id]);
 
   const addMenu = () =>
-    setMenus((prev) => [...prev, { name: "", price: "", description: "", calories: "" }]);
+    setMenus((prev) => [...prev, { name: "", price: "", description: "", calories: "", image_url: "", file: null, preview: "" }]);
 
   const removeMenu = (idx) =>
     setMenus((prev) => {
       const item = prev[idx];
-      if (item?.id) setRemovedMenuIds((a) => [...a, item.id]); // เก็บไว้ลบทีหลัง
+      if (item?.id) setRemovedMenuIds((a) => [...a, item.id]);
       return prev.filter((_, i) => i !== idx);
     });
 
   const updateMenu = (idx, field, value) =>
     setMenus((prev) => prev.map((m, i) => (i === idx ? { ...m, [field]: value } : m)));
+
+  const onMenuFile = (idx, file) => {
+    const url = file ? URL.createObjectURL(file) : "";
+    setMenus((prev) => prev.map((m, i) => (i === idx ? { ...m, file, preview: url } : m)));
+  };
 
   async function submit(e) {
     e.preventDefault();
@@ -132,7 +135,13 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
       setBusy(true);
       const [lat, lng] = center;
 
-      // 1) อัปเดตร้าน
+      // อัปโหลดปกใหม่ (ถ้ามี)
+      let newCoverUrl = "";
+      if (coverFile) {
+        newCoverUrl = await uploadTo(`restaurants/${id}/cover_${Date.now()}.jpg`, coverFile);
+      }
+
+      // อัปเดตร้าน
       await updateDoc(doc(db, "restaurants", id), {
         name,
         address,
@@ -140,14 +149,13 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
         close_time: close,
         price_range: price,
         description: desc,
-        image_url: imageUrl || "",
+        image_url: newCoverUrl || imageUrl || "",
         latitude: lat,
         longitude: lng,
         updated_at: serverTimestamp(),
       });
 
-      // 2) อัปเดตเมนู (เพิ่ม/แก้ไข/ลบ)
-      // 2.1 เพิ่ม/อัปเดต
+      // เมนู: เพิ่ม/แก้
       for (const m of menus) {
         const payload = {
           restaurant_id: id,
@@ -160,20 +168,29 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
           is_popular: Number(m.is_popular) || 0,
           updated_at: serverTimestamp(),
         };
-
         if (!payload.name) continue;
+
+        // อัปโหลดรูปเมนูใหม่
+        if (m.file) {
+          const url = await uploadTo(`restaurants/${id}/menus/${m.id || "new"}_${Date.now()}.jpg`, m.file);
+          payload.image_url = url;
+        }
 
         if (m.id) {
           await updateDoc(doc(db, "restaurants", id, "menus", m.id), payload);
         } else {
-          await addDoc(collection(db, "restaurants", id, "menus"), {
+          const newRef = await addDoc(collection(db, "restaurants", id, "menus"), {
             ...payload,
             created_at: serverTimestamp(),
           });
+          if (m.file && !payload.image_url) {
+            const url = await uploadTo(`restaurants/${id}/menus/${newRef.id}_${Date.now()}.jpg`, m.file);
+            await updateDoc(doc(db, "restaurants", id, "menus", newRef.id), { image_url: url });
+          }
         }
       }
 
-      // 2.2 ลบเมนู
+      // ลบเมนู
       for (const mid of removedMenuIds) {
         await deleteDoc(doc(db, "restaurants", id, "menus", mid));
       }
@@ -186,7 +203,6 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
     }
   }
 
-  // ---------------- Map ----------------
   const map = useMemo(
     () => (
       <div style={{ position: "relative", height: 280, borderRadius: 12, overflow: "hidden", border: "1px solid #e5e5e5" }}>
@@ -242,22 +258,13 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
         <h2 style={{ margin: "0 0 12px 0" }}>แก้ไขร้าน</h2>
 
         <label style={{ display: "block", fontSize: 14, marginTop: 8 }}>ชื่อร้าน</label>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", outline: "none" }}
-        />
+        <input value={name} onChange={(e) => setName(e.target.value)} style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", outline: "none" }} />
 
         <label style={{ display: "block", fontSize: 14, marginTop: 10 }}>Location</label>
         {map}
 
         <label style={{ display: "block", fontSize: 14, marginTop: 12 }}>คำอธิบายร้าน</label>
-        <textarea
-          rows={3}
-          value={desc}
-          onChange={(e) => setDesc(e.target.value)}
-          style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", outline: "none" }}
-        />
+        <textarea rows={3} value={desc} onChange={(e) => setDesc(e.target.value)} style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", outline: "none" }} />
 
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           <label style={{ fontSize: 14 }}>
@@ -270,26 +277,39 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
           </label>
           <label style={{ flex: 1, fontSize: 14 }}>
             ช่วงราคา
-            <input
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              style={{ display: "block", width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none", marginTop: 4 }}
-            />
+            <input value={price} onChange={(e) => setPrice(e.target.value)} style={{ display: "block", width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none", marginTop: 4 }} />
           </label>
         </div>
 
-        <label style={{ display: "block", fontSize: 14, marginTop: 10 }}>ภาพปก (URL)</label>
-        <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px" }} />
+        {/* รูปร้าน (ปก) */}
+        <div style={{ marginTop: 12 }}>
+          <label style={{ fontSize: 14 }}>
+            รูปร้าน (ปก)
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                setCoverFile(f || null);
+                setCoverPreview(f ? URL.createObjectURL(f) : "");
+              }}
+              style={{ display: "block", marginTop: 6 }}
+            />
+            {(coverPreview || imageUrl) && (
+              <img
+                alt=""
+                src={coverPreview || imageUrl}
+                style={{ width: "100%", height: 120, objectFit: "cover", marginTop: 6, borderRadius: 8 }}
+              />
+            )}
+          </label>
+        </div>
 
         {/* เมนู */}
         <div style={{ marginTop: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <label style={{ fontSize: 14 }}>เมนู</label>
-            <button
-              type="button"
-              onClick={addMenu}
-              style={{ border: "1px solid #ddd", borderRadius: 999, padding: "4px 10px", background: "#fff" }}
-            >
+            <button type="button" onClick={() => setMenus((p) => [...p, { name: "", price: "", description: "", calories: "", image_url: "", file: null, preview: "" }])} style={{ border: "1px solid #ddd", borderRadius: 999, padding: "4px 10px", background: "#fff" }}>
               + เมนู
             </button>
           </div>
@@ -298,39 +318,23 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
             {menus.map((m, idx) => (
               <div key={m.id || idx} style={{ border: "1px solid #eee", borderRadius: 10, padding: 10, background: "#fafafa" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 120px 120px", gap: 8 }}>
-                  <input
-                    placeholder="ชื่อเมนู"
-                    value={m.name}
-                    onChange={(e) => updateMenu(idx, "name", e.target.value)}
-                    style={{ border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none" }}
-                  />
-                  <input
-                    placeholder="ราคา"
-                    value={m.price}
-                    onChange={(e) => updateMenu(idx, "price", e.target.value)}
-                    style={{ border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none" }}
-                  />
-                  <input
-                    placeholder="แคลอรี่"
-                    value={m.calories}
-                    onChange={(e) => updateMenu(idx, "calories", e.target.value)}
-                    style={{ border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none" }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeMenu(idx)}
-                    style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff" }}
-                  >
+                  <input placeholder="ชื่อเมนู" value={m.name} onChange={(e) => updateMenu(idx, "name", e.target.value)} style={{ border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none" }} />
+                  <input placeholder="ราคา" value={m.price} onChange={(e) => updateMenu(idx, "price", e.target.value)} style={{ border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none" }} />
+                  <input placeholder="แคลอรี่" value={m.calories} onChange={(e) => updateMenu(idx, "calories", e.target.value)} style={{ border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none" }} />
+                  <button type="button" onClick={() => removeMenu(idx)} style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff" }}>
                     ลบ
                   </button>
                 </div>
+
                 <div style={{ marginTop: 6 }}>
-                  <input
-                    placeholder="คำอธิบาย"
-                    value={m.description}
-                    onChange={(e) => updateMenu(idx, "description", e.target.value)}
-                    style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none" }}
-                  />
+                  <input placeholder="คำอธิบาย" value={m.description} onChange={(e) => updateMenu(idx, "description", e.target.value)} style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px", outline: "none" }} />
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                  <input type="file" accept="image/*" onChange={(e) => onMenuFile(idx, e.target.files?.[0] || null)} />
+                  {(m.preview || m.image_url) && (
+                    <img alt="" src={m.preview || m.image_url} style={{ width: 120, height: 80, objectFit: "cover", borderRadius: 8 }} />
+                  )}
                 </div>
               </div>
             ))}
@@ -340,20 +344,7 @@ export default function StoreEdit({ id, onSaved, onCancel }) {
         {err && <div style={{ color: "crimson", marginTop: 10 }}>{err}</div>}
 
         <div style={{ marginTop: 14 }}>
-          <button
-            onClick={submit}
-            disabled={busy}
-            style={{
-              width: "100%",
-              padding: "12px 14px",
-              border: "none",
-              borderRadius: 10,
-              background: "#111",
-              color: "#fff",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={submit} disabled={busy} style={{ width: "100%", padding: "12px 14px", border: "none", borderRadius: 10, background: "#111", color: "#fff", fontWeight: 600, cursor: "pointer" }}>
             {busy ? "Saving…" : "Save"}
           </button>
         </div>

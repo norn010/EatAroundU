@@ -1,22 +1,19 @@
-// web/src/pages/StoreCreate.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { db } from "../firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { db, storage } from "../firebase";
+import { collection, addDoc, serverTimestamp, doc, updateDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// แก้ icon ของ Leaflet (ป้องกันไม่เจอไฟล์)
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl:
-    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
   shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
 });
 
-// ดักอีเวนต์ move/moveend เพื่อ sync center
 function CenterSync({ onCenter }) {
   useMapEvents({
     move: (e) => {
@@ -31,8 +28,14 @@ function CenterSync({ onCenter }) {
   return null;
 }
 
+// อัปโหลดไฟล์ไป Storage แล้วคืน URL
+async function uploadTo(path, file) {
+  const r = ref(storage, path);
+  await uploadBytes(r, file);
+  return await getDownloadURL(r);
+}
+
 export default function StoreCreate({ user, onCreated, onCancel }) {
-  // พิกัดเริ่มต้น (กลางปากช่อง)
   const [center, setCenter] = useState([14.8907, 102.1580]);
 
   // ข้อมูลร้าน
@@ -43,58 +46,56 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
   const [price, setPrice] = useState("฿฿");
   const [desc, setDesc] = useState("");
 
-  // เมนู (เริ่มด้วย 1 ช่อง)
+  // รูปร้าน (ปก)
+  const [coverFile, setCoverFile] = useState(null);
+  const [coverPreview, setCoverPreview] = useState("");
+
+  // เมนู (+ไฟล์รูป)
   const [menus, setMenus] = useState([
-    { name: "", price: "", description: "", calories: "" },
+    { name: "", price: "", description: "", calories: "", file: null, preview: "" },
   ]);
 
-  // Terms
   const [accept, setAccept] = useState(false);
-
-  // สถานะการ submit
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-
   const mapRef = useRef(null);
 
-  // ขอพิกัดปัจจุบัน
   useEffect(() => {
     if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const c = [pos.coords.latitude, pos.coords.longitude];
-        setCenter(c);
-        const map = mapRef.current;
-        if (map) map.flyTo(c, 15, { duration: 0.6 });
-      },
-      () => {}
-    );
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const c = [pos.coords.latitude, pos.coords.longitude];
+      setCenter(c);
+      mapRef.current?.flyTo(c, 15, { duration: 0.6 });
+    });
   }, []);
 
-  // เพิ่ม / ลบ / แก้เมนู ---------------------------
   const addMenu = () =>
-    setMenus((prev) => [...prev, { name: "", price: "", description: "", calories: "" }]);
+    setMenus((prev) => [...prev, { name: "", price: "", description: "", calories: "", file: null, preview: "" }]);
 
-  const removeMenu = (idx) =>
-    setMenus((prev) => prev.filter((_, i) => i !== idx));
+  const removeMenu = (idx) => setMenus((prev) => prev.filter((_, i) => i !== idx));
 
   const updateMenu = (idx, field, value) =>
     setMenus((prev) => prev.map((m, i) => (i === idx ? { ...m, [field]: value } : m)));
 
-  // ส่งข้อมูล
+  const onMenuFile = (idx, file) => {
+    const url = file ? URL.createObjectURL(file) : "";
+    setMenus((prev) =>
+      prev.map((m, i) => (i === idx ? { ...m, file, preview: url } : m))
+    );
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
-
-    const [lat, lng] = center;
 
     if (!name) return setErr("กรุณากรอกชื่อร้าน");
     if (!accept) return setErr("กรุณายอมรับข้อตกลงก่อน");
 
     try {
       setBusy(true);
+      const [lat, lng] = center;
 
-      // 1) เพิ่มร้าน
+      // 1) เพิ่มร้าน (ยังไม่ใส่ URL รูป)
       const restRef = await addDoc(collection(db, "restaurants"), {
         owner_id: user.uid,
         name,
@@ -107,29 +108,52 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
         close_time: close,
         rating: 0,
         description: desc,
-        image_url: "",
+        image_url: "", // รูปร้าน (ปก)
         is_new: true,
         created_at: serverTimestamp(),
       });
 
-      // 2) เพิ่มเมนูเข้า subcollection ของร้าน
+      // 2) อัปโหลดรูปร้าน (ปก)
+      if (coverFile) {
+        const coverUrl = await uploadTo(
+          `restaurants/${restRef.id}/cover_${Date.now()}.jpg`,
+          coverFile
+        );
+        await updateDoc(doc(db, "restaurants", restRef.id), { image_url: coverUrl });
+      }
+
+      // 3) เพิ่มเมนู + รูปเมนู
       for (const row of menus) {
         const menuName = (row.name || "").trim();
         if (!menuName) continue;
         const priceNum = Number(row.price) || 0;
         const calNum = Number(row.calories) || 0;
 
-        await addDoc(collection(db, "restaurants", restRef.id, "menus"), {
-          restaurant_id: restRef.id,        // ใช้กับ collectionGroup search
-          name: menuName,
-          name_lc: menuName.toLowerCase(),  // prefix search
-          price: priceNum,
-          calories: calNum,
-          description: row.description || "",
-          image_url: "",
-          is_popular: 0,
-          created_at: serverTimestamp(),
-        });
+        const menuRef = await addDoc(
+          collection(db, "restaurants", restRef.id, "menus"),
+          {
+            restaurant_id: restRef.id,
+            name: menuName,
+            name_lc: menuName.toLowerCase(),
+            price: priceNum,
+            calories: calNum,
+            description: row.description || "",
+            image_url: "",
+            is_popular: 0,
+            created_at: serverTimestamp(),
+          }
+        );
+
+        if (row.file) {
+          const url = await uploadTo(
+            `restaurants/${restRef.id}/menus/${menuRef.id}_${Date.now()}.jpg`,
+            row.file
+          );
+          await updateDoc(
+            doc(db, "restaurants", restRef.id, "menus", menuRef.id),
+            { image_url: url }
+          );
+        }
       }
 
       onCreated?.(restRef.id);
@@ -140,7 +164,6 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
     }
   };
 
-  // --------------- Map UI ---------------
   const map = useMemo(
     () => (
       <div
@@ -162,8 +185,6 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
             attribution="&copy; OpenStreetMap"
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
-
-          {/* Marker ให้ลากได้ */}
           <Marker
             draggable
             position={center}
@@ -174,12 +195,9 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
               },
             }}
           />
-
-          {/* Sync center หากมีการเลื่อนแผนที่ */}
           <CenterSync onCenter={(c) => setCenter(c)} />
         </MapContainer>
 
-        {/* กากบาทกลางจอ */}
         <div
           style={{
             position: "absolute",
@@ -189,12 +207,9 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
             pointerEvents: "none",
             fontSize: 28,
           }}
-          title="เลื่อนแผนที่หรือ Marker เพื่อปักตำแหน่งร้าน"
         >
           📍
         </div>
-
-        {/* กล่อง Latitude/Longitude */}
         <div
           style={{
             position: "absolute",
@@ -204,13 +219,10 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
             padding: "6px 10px",
             borderRadius: 8,
             fontSize: 12,
-            boxShadow: "0 1px 5px rgba(0,0,0,.08)",
           }}
         >
           lat: {center[0].toFixed(6)} • lng: {center[1].toFixed(6)}
         </div>
-
-        {/* ปุ่ม Locate */}
         <button
           onClick={() => {
             if (!navigator.geolocation) return;
@@ -256,14 +268,12 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
       >
         <h2 style={{ margin: "0 0 12px 0" }}>เพิ่มร้านใหม่</h2>
 
-        {/* ชื่อร้าน */}
         <label style={{ display: "block", fontSize: 14, marginTop: 8 }}>
           ชื่อร้าน
         </label>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Value"
           style={{
             width: "100%",
             border: "1px solid #ddd",
@@ -273,39 +283,11 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
           }}
         />
 
-        {/* Location + Map */}
         <label style={{ display: "block", fontSize: 14, marginTop: 10 }}>
           Location
         </label>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginBottom: 6,
-          }}
-        >
-          <select
-            disabled
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              padding: "10px 8px",
-              background: "#f7f7f7",
-              color: "#666",
-            }}
-            defaultValue=""
-          >
-            <option value="">เลือกที่ตั้ง</option>
-          </select>
-          <span style={{ fontSize: 12, color: "#666" }}>
-            (เลื่อนแผนที่/ลากหมุดเพื่อเลือกพิกัด)
-          </span>
-        </div>
-
         {map}
 
-        {/* คำอธิบายร้าน */}
         <label style={{ display: "block", fontSize: 14, marginTop: 12 }}>
           คำอธิบายร้าน
         </label>
@@ -313,7 +295,6 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
           rows={3}
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
-          placeholder="Value"
           style={{
             width: "100%",
             border: "1px solid #ddd",
@@ -323,7 +304,6 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
           }}
         />
 
-        {/* เวลา/ราคา */}
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           <label style={{ fontSize: 14 }}>
             เปิด
@@ -362,7 +342,6 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
             <input
               value={price}
               onChange={(e) => setPrice(e.target.value)}
-              placeholder="฿, ฿฿, ฿฿฿"
               style={{
                 display: "block",
                 width: "100%",
@@ -373,6 +352,36 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
                 marginTop: 4,
               }}
             />
+          </label>
+        </div>
+
+        {/* รูปร้าน (ปก) */}
+        <div style={{ marginTop: 12 }}>
+          <label style={{ fontSize: 14 }}>
+            รูปร้าน (ปก)
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                setCoverFile(f || null);
+                setCoverPreview(f ? URL.createObjectURL(f) : "");
+              }}
+              style={{ display: "block", marginTop: 6 }}
+            />
+            {coverPreview && (
+              <img
+                alt=""
+                src={coverPreview}
+                style={{
+                  width: "100%",
+                  height: 120,
+                  objectFit: "cover",
+                  marginTop: 6,
+                  borderRadius: 8,
+                }}
+              />
+            )}
           </label>
         </div>
 
@@ -394,7 +403,6 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
             </button>
           </div>
 
-          {/* กล่องรายการเมนู */}
           <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
             {menus.map((m, idx) => (
               <div
@@ -463,9 +471,7 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
                   <input
                     placeholder="คำอธิบาย"
                     value={m.description}
-                    onChange={(e) =>
-                      updateMenu(idx, "description", e.target.value)
-                    }
+                    onChange={(e) => updateMenu(idx, "description", e.target.value)}
                     style={{
                       width: "100%",
                       border: "1px solid #ddd",
@@ -474,6 +480,28 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
                       outline: "none",
                     }}
                   />
+                </div>
+
+                <div style={{ marginTop: 6 }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => onMenuFile(idx, e.target.files?.[0] || null)}
+                  />
+                  {m.preview && (
+                    <img
+                      alt=""
+                      src={m.preview}
+                      style={{
+                        width: 120,
+                        height: 80,
+                        objectFit: "cover",
+                        display: "block",
+                        marginTop: 6,
+                        borderRadius: 8,
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             ))}
@@ -490,21 +518,12 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
             />
             I accept the terms
           </label>
-          <div style={{ fontSize: 12, color: "#666" }}>
-            <a href="#" onClick={(e) => e.preventDefault()}>
-              Read our T&Cs
-            </a>
-          </div>
         </div>
 
-        {/* Error */}
         {err && (
-          <div style={{ marginTop: 8, color: "crimson", fontSize: 14 }}>
-            {err}
-          </div>
+          <div style={{ marginTop: 8, color: "crimson", fontSize: 14 }}>{err}</div>
         )}
 
-        {/* Submit */}
         <div style={{ marginTop: 12 }}>
           <button
             onClick={submit}
