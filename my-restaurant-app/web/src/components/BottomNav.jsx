@@ -6,6 +6,7 @@ export default function BottomNav({ current, onNavigate }) {
     { id: "map",       label: "Home",  icon: "🏠" },
     { id: "saved",     label: "Saved", icon: "🔖" },
     { id: "profile",   label: "Profile", icon: "👤" },
+    // { id: "ai",       label: "AI Chat", icon: "🤖" },
   ];
 
   return (

@@ -21,6 +21,8 @@ import TogetherCreateModal from "./components/TogetherCreateModal";
 import TogetherChat from "./pages/TogetherChat";
 import TogetherList from "./pages/TogetherList";
 
+import AiChat from "./pages/AiChat";
+
 
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth, db } from "./firebase";
@@ -206,6 +208,13 @@ export default function App() {
           <TogetherChat
             roomId={togetherRoomId}
             goBack={() => go(prevPage || "map")}
+          />
+        );
+        break;
+      case "ai":
+        content = (
+          <AiChat
+            onOpenRestaurant={(id) => { setRestId(id); go("rest"); }}
           />
         );
         break;
