@@ -6,6 +6,7 @@ export default function Sidebar({ open, onClose, onAction, user }) {
   const menus = [
     { id: "map", label: "Home", icon: "🏠" },
     // { id: "random", label: "Random", icon: "🎲" },
+    { id: "achievements", label: "Achievements", icon: "🏆" }, // ✅ เพิ่มเมนู Achievements
     { id: "profile", label: "Profile", icon: "👤" },
     { id: "together_list", label: "together", icon: "👥" },
     { id: "ai", label: "AI Chat", icon: "🤖" },

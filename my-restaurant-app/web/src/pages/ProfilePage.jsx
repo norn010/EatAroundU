@@ -161,7 +161,13 @@ export default function ProfilePage({ goBack }) {
   return (
     <div style={{ maxWidth: 640, margin: "0 auto", padding: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <button onClick={goBack}>← Back</button>
+        <button
+          type="button"
+          onClick={goBack}
+          style={{ border: "none", background: "#111", color: "#fff", padding: "10px 14px", borderRadius: 8, cursor: "pointer", marginBottom: 12 }}
+        >
+          Back
+        </button>
         <h2 style={{ margin: 0 }}>Edit Profile</h2>
       </div>
 

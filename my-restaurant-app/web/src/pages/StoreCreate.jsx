@@ -1,7 +1,9 @@
+// src/pages/StoreCreate.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { db, storage } from "../firebase";
 import { collection, addDoc, serverTimestamp, doc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { incUserStat } from "../lib/achievements"; // ✅ เพิ่ม
 
 import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
 import L from "leaflet";
@@ -95,7 +97,7 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
       setBusy(true);
       const [lat, lng] = center;
 
-      // 1) เพิ่มร้าน (ยังไม่ใส่ URL รูป)
+      // 1) เพิ่มร้าน
       const restRef = await addDoc(collection(db, "restaurants"), {
         owner_id: user.uid,
         name,
@@ -108,7 +110,7 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
         close_time: close,
         rating: 0,
         description: desc,
-        image_url: "", // รูปร้าน (ปก)
+        image_url: "",
         is_new: true,
         created_at: serverTimestamp(),
       });
@@ -155,6 +157,9 @@ export default function StoreCreate({ user, onCreated, onCancel }) {
           );
         }
       }
+
+      // ✅ ปล่อยเหรียญ “First Store / Create Store”
+      await incUserStat(user.uid, "stores_created_count", 1);
 
       onCreated?.(restRef.id);
     } catch (e) {

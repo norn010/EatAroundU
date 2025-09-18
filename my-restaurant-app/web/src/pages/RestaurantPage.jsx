@@ -5,6 +5,7 @@ import {
   doc, getDoc, setDoc, collection, query, orderBy, onSnapshot,
   addDoc, updateDoc, serverTimestamp, limit
 } from "firebase/firestore";
+import { incUserStat} from "../lib/achievements"; 
 import Toast from "../components/Toast";
 
 // ---------- small UI helpers ----------
@@ -158,7 +159,7 @@ export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogeth
     return () => unsub();
   }, [id]);
 
-  // toggle favorite: บันทึก/ลบแบบ soft delete
+  // toggle favorite
   async function toggleFav() {
     const u = auth.currentUser;
     if (!u || !rest) return alert("กรุณาเข้าสู่ระบบ");
@@ -197,7 +198,7 @@ export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogeth
     return `${km.toFixed(1)} km`;
   }, [myLoc, rest]);
 
-  // ส่งรีวิว
+  // ส่งรีวิว → ปล่อยเหรียญ (ผู้รีวิว) + รวมยอดรีวิวของร้านไปยัง owner
   async function submitReview() {
     const u = auth.currentUser;
     if (!u) return alert("กรุณาเข้าสู่ระบบก่อนรีวิว");
@@ -211,6 +212,17 @@ export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogeth
       created_at: serverTimestamp()
     };
     await addDoc(collection(db, "restaurants", id, "reviews"), payload);
+
+    // ✅ เพิ่มตัวนับรีวิวฝั่งผู้ใช้
+    await incUserStat(u.uid, "reviews_count", 1);
+
+    // ✅ รวมรีวิวไปยังเจ้าของร้าน
+    try {
+      const rs = await getDoc(doc(db, "restaurants", id));
+      const ownerId = rs.exists() ? rs.data().owner_id : null;
+      if (ownerId) await addRestaurantReviewStat(id, ownerId);
+    } catch (e) { /* ignore */ }
+
     setRating(5); setTaste(5); setService(5); setComment("");
   }
 
@@ -227,11 +239,12 @@ export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogeth
           alt="" style={{ width: "100%", height: 220, objectFit: "cover", borderRadius: 10 }} />
         <button onClick={goBack}
           style={{
-            position: "absolute", left: 12, top: 12, borderRadius: 999, width: 32, height: 32,
+            position: "absolute", left: 12, top: 12, padding: "10px 14px", borderRadius: 8, cursor: "pointer",
             border: "none", background: "rgba(0,0,0,.6)", color: "#fff"
           }}>
-          ←
+          Back
         </button>
+        
       </div>
 
       <div style={{ marginTop: -12, background: "#fff", padding: "14px 12px", borderRadius: 12 }}>
@@ -242,13 +255,12 @@ export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogeth
           <div style={{ fontSize: 22, fontWeight: 800 }}>{rest.name}</div>
           <div style={{ display: "flex", gap: 8 }}>
             <IconBtn icon="👥" onClick={() => onCreateTogether?.(rest.id, rest.name)} />
-            {/* เปิดหน้าเลือกโต๊ะ โดยไม่ fallback ไปจองอัตโนมัติ */}
             <IconBtn icon="➕" label="Queue" onClick={() => onOpenQueue?.(rest.id)} />
             <IconBtn icon="🔖" active={fav} onClick={toggleFav} />
           </div>
         </div>
 
-        {/* ✅ แถบข้อมูลใต้ชื่อร้าน: ปุ่ม Distance แบบชิปใหม่ + เรตติ้ง + ประเภทร้าน */}
+        {/* ✅ ปุ่ม Distance แบบชิป */}
         <div style={{ marginTop: 8, color: "#555", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <DistanceChip
             hasDistance={hasDistance}

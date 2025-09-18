@@ -1,121 +1,175 @@
 // src/components/TogetherCreateModal.jsx
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { addDoc, collection, serverTimestamp, setDoc, doc } from "firebase/firestore";
 import { auth, db } from "../firebase";
-import {
-  addDoc, collection, serverTimestamp, doc, setDoc
-} from "firebase/firestore";
+import { incUserStat } from "../lib/achievements";
 
-function random4() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
+// helper: sha256 to hex
+async function sha256Hex(str) {
+  const buf = new TextEncoder().encode(str);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Modal สร้างห้อง Together
- * props:
- *   user: {uid,email}
- *   restaurant: { id, name }
- *   onClose: () => void
- *   onCreated: (roomId:string) => void
- */
 export default function TogetherCreateModal({ user, restaurant, onClose, onCreated }) {
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0,10));
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
   const [hour, setHour] = useState("19");
   const [minute, setMinute] = useState("00");
   const [isPrivate, setIsPrivate] = useState(false);
-  const [joinCode, setJoinCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
-  useEffect(() => {
-    if (isPrivate) setJoinCode(random4());
-    else setJoinCode("");
-  }, [isPrivate]);
+  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+  const minutes = ["00", "15", "30", "45"];
 
-  async function createRoom() {
-    if (!user?.uid || !restaurant?.id) return;
+  async function handleCreate() {
+    setErr("");
+    const u = auth.currentUser;
+    if (!u) {
+      setErr("กรุณาเข้าสู่ระบบก่อน");
+      return;
+    }
+    if (!restaurant?.id) {
+      setErr("ไม่พบข้อมูลร้าน");
+      return;
+    }
+
     try {
       setBusy(true);
-      const payload = {
+
+      let joinCodeHash = "";
+      if (isPrivate) {
+        const code = window.prompt("ตั้งรหัสเข้าห้อง (อย่างน้อย 4 ตัว):") || "";
+        if (code.trim().length < 4) {
+          setErr("รหัสต้องอย่างน้อย 4 ตัว");
+          setBusy(false);
+          return;
+        }
+        joinCodeHash = await sha256Hex(code.trim());
+      }
+
+      const roomRef = await addDoc(collection(db, "together_rooms"), {
+        creator_id: u.uid,
+        creator_email: u.email,
         restaurant_id: restaurant.id,
         restaurant_name: restaurant.name || "",
-        creator_id: user.uid,
+        is_private: !!isPrivate,
+        join_code_hash: joinCodeHash,     // ✅ เก็บ hash ไม่ใช่รหัสจริง
         meet_date: date,
-        meet_time: `${hour.padStart(2,"0")}:${minute.padStart(2,"0")}`,
-        is_private: isPrivate,
-        join_code: isPrivate ? joinCode : "",
-        member_ids: { [user.uid]: true },
-        created_at: serverTimestamp()
-      };
-      const ref = await addDoc(collection(db, "together_rooms"), payload);
+        meet_time: `${hour}:${minute}`,
+        created_at: serverTimestamp(),
+      });
 
-      // สร้างข้อความต้อนรับแรกใน subcollection messages
-      const msg = {
-        sender_id: "system",
-        sender_name: "System",
-        text: `สร้างห้องสำหรับร้าน ${restaurant.name} — นัด ${payload.meet_date} ${payload.meet_time}${isPrivate ? ` (รหัสเข้าห้อง: ${joinCode})` : ""}`,
-        type: "system",
-        created_at: serverTimestamp()
-      };
-      await addDoc(collection(db, "together_rooms", ref.id, "messages"), msg);
+      // เพิ่มผู้สร้างเป็นสมาชิกทันที
+      await setDoc(doc(db, "together_rooms", roomRef.id, "members", u.uid), {
+        user_id: u.uid,
+        joined_at: serverTimestamp()
+      });
 
-      // เพิ่มคนสร้างเป็น member ชัด ๆ (ไม่จำเป็นก็ได้ แต่กันค่าหาย)
-      await setDoc(doc(db, "together_rooms", ref.id), { member_ids: { [user.uid]: true } }, { merge: true });
+      // อัปเดตสถิติ (สำหรับ achievements)
+      await incUserStat(u.uid, "together_created_count", 1);
 
-      onCreated?.(ref.id);
+      onCreated?.(roomRef.id);
     } catch (e) {
-      alert("สร้างห้องไม่สำเร็จ: " + (e.message || e));
+      console.error(e);
+      setErr(e?.message || String(e));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background:"rgba(0,0,0,.45)",
-      display: "grid", placeItems: "center", zIndex: 2000
-    }}>
-      <div style={{
-        width: 360, maxWidth:"95%", background:"#fff",
-        borderRadius: 14, padding: 14, boxShadow:"0 10px 30px rgba(0,0,0,.2)"
-      }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <div style={{ fontWeight:800, fontSize:18 }}>➕ together</div>
-          <button onClick={onClose} style={{ border:"none", background:"transparent", fontSize:22 }}>×</button>
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,.35)",
+        display: "grid",
+        placeItems: "center",
+        zIndex: 9999,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+    >
+      <div
+        style={{
+          width: 420,
+          maxWidth: "92vw",
+          background: "#fff",
+          borderRadius: 12,
+          padding: 16,
+          boxShadow: "0 6px 24px rgba(0,0,0,.18)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>together</div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", fontSize: 20 }}>
+            ×
+          </button>
         </div>
 
-        <div style={{ marginTop:6, fontWeight:700 }}>{restaurant?.name || "-"}</div>
-
-        {/* date */}
-        <div style={{ marginTop:12 }}>
-          <label style={{ display:"block", fontSize:13, opacity:.8 }}>วันที่</label>
-          <input type="date" value={date} onChange={e=>setDate(e.target.value)}
-            style={{ width:"100%", border:"1px solid #ddd", borderRadius:8, padding:"8px 10px" }}/>
+        <div style={{ marginTop: 10, fontWeight: 700 }}>
+          {restaurant?.name || "—"}
         </div>
 
-        {/* time */}
-        <div style={{ display:"flex", gap:8, marginTop:10 }}>
-          <div style={{ flex:1 }}>
-            <label style={{ display:"block", fontSize:13, opacity:.8 }}>ชั่วโมง</label>
-            <input type="number" min="0" max="23" value={hour}
-                   onChange={e=>setHour(e.target.value.slice(0,2))}
-                   style={{ width:"100%", border:"1px solid #ddd", borderRadius:8, padding:"8px 10px" }}/>
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 14, marginBottom: 6 }}>วันที่</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              style={{ border: "1px solid #ddd", padding: "8px 10px", borderRadius: 8 }}
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+              <select
+                value={hour}
+                onChange={(e) => setHour(e.target.value)}
+                style={{ border: "1px solid #ddd", padding: "8px 10px", borderRadius: 8 }}
+              >
+                {hours.map((h) => (
+                  <option key={h} value={h}>{h}</option>
+                ))}
+              </select>
+              <select
+                value={minute}
+                onChange={(e) => setMinute(e.target.value)}
+                style={{ border: "1px solid #ddd", padding: "8px 10px", borderRadius: 8 }}
+              >
+                {minutes.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div style={{ flex:1 }}>
-            <label style={{ display:"block", fontSize:13, opacity:.8 }}>นาที</label>
-            <input type="number" min="0" max="59" value={minute}
-                   onChange={e=>setMinute(e.target.value.slice(0,2))}
-                   style={{ width:"100%", border:"1px solid #ddd", borderRadius:8, padding:"8px 10px" }}/>
-          </div>
         </div>
 
-        <div style={{ marginTop:12, display:"flex", alignItems:"center", gap:8 }}>
-          <input id="pv" type="checkbox" checked={isPrivate} onChange={e=>setIsPrivate(e.target.checked)}/>
-          <label htmlFor="pv" style={{ cursor:"pointer" }}>Private</label>
-          {isPrivate && <span style={{ marginLeft:10, fontSize:12, opacity:.8 }}>รหัส: <b>{joinCode}</b></span>}
-        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 14 }}>
+          <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
+          Private
+        </label>
 
-        <div style={{ marginTop:14, textAlign:"right" }}>
-          <button disabled={busy} onClick={createRoom}
-                  style={{ border:"none", background:"#111", color:"#fff", padding:"8px 14px", borderRadius:8 }}>
-            {busy ? "กำลังสร้าง…" : "สร้าง"}
+        {err && <div style={{ color: "crimson", fontSize: 13, marginTop: 10 }}>{err}</div>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+          <button onClick={onClose} style={{ border: "1px solid #ddd", padding: "8px 12px", borderRadius: 8 }}>
+            ยกเลิก
+          </button>
+          <button
+            onClick={handleCreate}
+            disabled={busy}
+            style={{
+              border: "none",
+              background: "#111",
+              color: "#fff",
+              padding: "8px 12px",
+              borderRadius: 8,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            {busy ? "กำลังสร้าง…" : "สร้างห้อง"}
           </button>
         </div>
       </div>

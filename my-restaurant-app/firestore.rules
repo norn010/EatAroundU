@@ -2,34 +2,63 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    /* users */
-    match /users/{uid} {
-      allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if request.auth != null && request.auth.uid == uid;
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+
+    // ===== helper : ตรวจว่าเป็น owner ของร้าน =====
+    function isOwner(restId) {
+      return get(/databases/$(database)/documents/restaurants/$(restId)).data.owner_id == uid();
     }
 
-    /* restaurants + subcollections */
+    // ===== helper : ตรวจว่าเป็นสมาชิกห้อง together =====
+    function isMember(roomId) {
+      return exists(/databases/$(database)/documents/together_rooms/$(roomId)/members/$(uid()));
+    }
+
+    /* -------------------- USERS -------------------- */
+    match /users/{userId} {
+      // อ่าน/เขียนได้เฉพาะของตัวเอง
+      allow read, write: if signedIn() && userId == uid();
+
+      // user stats เป็น subcollection แบบ doc เดียว _main
+      match /stats/{sid} {
+        allow read: if signedIn() && userId == uid();
+        allow create, update: if signedIn() && userId == uid() && sid == "_main";
+      }
+
+      // user achievements
+      match /achievements/{aid} {
+        allow read: if signedIn() && userId == uid();
+        allow create: if signedIn() && userId == uid()
+          && request.resource.data.date_earned is timestamp;
+        allow update, delete: if false;
+      }
+    }
+
+    /* Achievements master (static) */
+    match /achievements_master/{aid} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    /* -------------------- RESTAURANTS -------------------- */
     match /restaurants/{restId} {
       allow read: if true;
 
-      allow create: if request.auth != null
-                    && request.resource.data.owner_id == request.auth.uid;
-      allow update, delete: if request.auth != null
-                            && resource.data.owner_id == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.owner_id == uid();
+      allow update, delete: if signedIn() && isOwner(restId);
 
       /* menus */
       match /menus/{menuId} {
         allow read: if true;
-        allow create, update, delete: if request.auth != null
-          && get(/databases/$(database)/documents/restaurants/$(restId)).data.owner_id
-             == request.auth.uid;
+        allow create, update, delete: if signedIn() && isOwner(restId);
       }
 
       /* reviews */
-      match /reviews/{reviewId} {
+      match /reviews/{rid} {
         allow read: if true;
-        allow create: if request.auth != null
-          && request.resource.data.user_id == request.auth.uid
+        allow create: if signedIn()
+          && request.resource.data.user_id == uid()
           && request.resource.data.restaurant_id == restId
           && request.resource.data.rating is number
           && request.resource.data.created_at is timestamp;
@@ -37,21 +66,17 @@ service cloud.firestore {
 
       /* tables – อ่านได้ทุกคน
          เขียนได้:
-           - เจ้าของร้าน: อะไรก็ได้
-           - ผู้ใช้ทั่วไป: อนุญาตเฉพาะ available -> occupied เท่านั้น
+           - owner: create/update/delete ได้ทั้งหมด
+           - user ทั่วไป: allowed เฉพาะ available -> occupied ตอนจอง
       */
-      match /tables/{tableId} {
+      match /tables/{tid} {
         allow read: if true;
 
-        // Owner full control
-        allow create, update, delete: if request.auth != null
-          && get(/databases/$(database)/documents/restaurants/$(restId)).data.owner_id
-             == request.auth.uid;
+        // owner full control
+        allow create, update, delete: if signedIn() && isOwner(restId);
 
-        // Extra rule for non-owner to book (available -> occupied)
-        allow update: if request.auth != null
-          && get(/databases/$(database)/documents/restaurants/$(restId)).data.owner_id
-             != request.auth.uid
+        // จองโต๊ะโดย user
+        allow update: if signedIn() && !isOwner(restId)
           && resource.data.status == "available"
           && request.resource.data.status == "occupied"
           && request.resource.data.table_number == resource.data.table_number
@@ -59,37 +84,81 @@ service cloud.firestore {
       }
     }
 
-    /* table_bookings – ใช้ตอนจอง/ยกเลิกโต๊ะ */
-    match /table_bookings/{bookingId} {
-      // ผู้ใช้เห็นเฉพาะรายการของตนเอง หรือเจ้าของร้านของ booking นั้น ๆ เห็นได้
-      allow read: if request.auth != null && (
-        resource.data.user_id == request.auth.uid ||
-        (
-          exists(/databases/$(database)/documents/restaurants/$(resource.data.restaurant_id)) &&
-          get(/databases/$(database)/documents/restaurants/$(resource.data.restaurant_id)).data.owner_id
-            == request.auth.uid
-        )
+    /* -------------------- TABLE BOOKINGS -------------------- */
+    match /table_bookings/{bid} {
+      // ผู้ใช้ดูได้เฉพาะของตนเอง หรือ owner ของร้านนั้น
+      allow read: if signedIn() && (
+        resource.data.user_id == uid() ||
+        isOwner(resource.data.restaurant_id)
       );
 
-      // สร้างได้เมื่อ login และเขียนในนามตัวเองเท่านั้น
-      allow create: if request.auth != null
-        && request.resource.data.user_id == request.auth.uid
+      allow create: if signedIn()
+        && request.resource.data.user_id == uid()
         && request.resource.data.restaurant_id is string
         && request.resource.data.table_id is string
         && exists(/databases/$(database)/documents/restaurants/$(request.resource.data.restaurant_id))
         && request.resource.data.reserved_at is timestamp
         && request.resource.data.created_at is timestamp;
 
-      // อัปเดต (เช่น cancel) ได้เฉพาะเจ้าของ booking
-      allow update: if request.auth != null
-        && resource.data.user_id == request.auth.uid;
+      allow update: if signedIn() && resource.data.user_id == uid();
     }
 
-    /* favorites */
+    /* -------------------- TOGETHER ROOMS -------------------- */
+    match /together_rooms/{roomId} {
+      // ✅ ให้ "อ่าน metadata ห้องได้ทุกคน (ที่ login)" เพื่อแสดงใน list
+      allow read: if signedIn();
+
+      // ✅ สร้างห้องได้เองเท่านั้น
+      allow create: if signedIn()
+        && request.resource.data.creator_id == uid()
+        && request.resource.data.restaurant_id is string
+        && request.resource.data.restaurant_name is string
+        && request.resource.data.created_at is timestamp;
+
+      // ✅ แก้ไข/ลบ: ให้เฉพาะผู้สร้างห้อง
+      allow update, delete: if signedIn() && resource.data.creator_id == uid();
+
+      /* สมาชิกของห้อง */
+      match /members/{memberUid} {
+        // ✅ ทุกคนอ่านได้ เพื่อโชว์จำนวน/รายชื่อใน modal (ไม่อันตรายเกินไป)
+        allow read: if signedIn();
+
+        // ✅ ตัวเอง add ตัวเองเข้าเป็นสมาชิกได้
+        allow create: if signedIn() && uid() == memberUid;
+
+        // ✅ ลบออกจากสมาชิกได้เฉพาะตัวเอง (owner จะลบทั้งห้องที่ doc แม่)
+        allow delete: if signedIn() && (uid() == memberUid);
+      }
+
+      /* ข้อความในห้อง */
+      match /messages/{msgId} {
+        // ✅ อ่านได้: public -> ทุกคนที่ login, private -> เฉพาะสมาชิก
+        allow read: if signedIn() && (
+          !get(/databases/$(database)/documents/together_rooms/$(roomId)).data.is_private || isMember(roomId)
+        );
+
+        // ✅ ส่งข้อความได้: public -> ทุกคนที่ login, private -> เฉพาะสมาชิก
+        allow create: if signedIn()
+          && (
+            !get(/databases/$(database)/documents/together_rooms/$(roomId)).data.is_private
+            || isMember(roomId)
+          )
+          && request.resource.data.user_id == uid()
+          && request.resource.data.created_at is timestamp;
+
+        // ✅ ลบข้อความได้: เฉพาะผู้ส่งเอง หรือเจ้าของห้อง (ใช้ลบทั้งห้อง)
+        allow delete: if signedIn()
+          && (
+            resource.data.user_id == uid() ||
+            get(/databases/$(database)/documents/together_rooms/$(roomId)).data.creator_id == uid()
+          );
+      }
+    }
+
+    /* -------------------- FAVORITES -------------------- */
     match /favorites/{favId} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null
-        && request.resource.data.user_id == request.auth.uid;
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.user_id == uid();
     }
   }
 }

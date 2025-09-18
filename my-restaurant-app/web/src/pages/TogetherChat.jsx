@@ -17,30 +17,17 @@ export default function TogetherChat({ roomId, goBack }) {
   const [participants, setParticipants] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
 
-  // โหลดข้อมูลห้อง
   useEffect(() => {
     if (!roomId) return;
     const unsub = onSnapshot(doc(db, "together_rooms", roomId), async (snap) => {
       if (!snap.exists()) { setRoom(null); setLoading(false); return; }
       const r = { id: snap.id, ...snap.data() };
-
-      if (r.restaurant_id) {
-        const rsnap = await getDoc(doc(db, "restaurants", r.restaurant_id));
-        r.restaurant_name = rsnap.exists() ? rsnap.data().name : "Together";
-      }
-
-      if (r.creator_id) {
-        const usnap = await getDoc(doc(db, "users", r.creator_id));
-        r.creator_email = usnap.exists() ? (usnap.data().email || r.creator_id) : r.creator_id;
-      }
-
       setRoom(r);
       setLoading(false);
     });
     return () => unsub();
   }, [roomId]);
 
-  // โหลดข้อความ realtime + หา participants (ตัด system ออก)
   useEffect(() => {
     if (!roomId) return;
     const q = query(
@@ -51,12 +38,8 @@ export default function TogetherChat({ roomId, goBack }) {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setMessages(msgs);
 
-      const humans = msgs.filter(
-        m => m.user_id && m.type !== "system" && m.sender_id !== "system"
-      );
-      const unique = Array.from(
-        new Map(humans.map(m => [m.user_id, m.email || m.user_id])).values()
-      );
+      const humans = msgs.filter(m => m.user_id && m.type !== "system" && m.sender_id !== "system");
+      const unique = Array.from(new Map(humans.map(m => [m.user_id, m.email || m.user_id])).values());
       setParticipants(unique);
 
       setTimeout(() => listRef.current?.scrollTo(0, listRef.current.scrollHeight), 100);
@@ -76,24 +59,23 @@ export default function TogetherChat({ roomId, goBack }) {
     setText("");
   }
 
-  // 🔥 ลบห้อง (เฉพาะเจ้าของ)
+  // ลบห้อง (เฉพาะเจ้าของ) + ลบข้อความทั้งหมด
   async function handleDeleteRoom() {
     if (!room) return;
     const u = auth.currentUser;
-    if (!u || u.uid !== room.creator_id) return; // ป้องกัน
+    if (!u || u.uid !== room.creator_id) return;
 
     const ok = window.confirm("ลบห้องนี้ถาวร รวมทั้งข้อความทั้งหมด?");
     if (!ok) return;
 
     try {
       setDeleting(true);
-      // ลบทุกข้อความใน subcollection messages
       const msgsRef = collection(db, "together_rooms", room.id, "messages");
       const msgSnap = await getDocs(msgsRef);
-      await Promise.all(msgSnap.docs.map(d => deleteDoc(doc(db, "together_rooms", room.id, "messages", d.id))));
-      // ลบเอกสารห้อง
+      await Promise.all(
+        msgSnap.docs.map(d => deleteDoc(doc(db, "together_rooms", room.id, "messages", d.id)))
+      );
       await deleteDoc(doc(db, "together_rooms", room.id));
-      // กลับหน้าก่อนหน้า
       goBack?.();
     } catch (e) {
       alert("ลบห้องไม่สำเร็จ: " + e.message);
@@ -128,7 +110,6 @@ export default function TogetherChat({ roomId, goBack }) {
         วันที่นัด {room.meet_date} เวลา {room.meet_time}
       </div>
 
-      {/* แชท */}
       <div
         ref={listRef}
         style={{
@@ -173,7 +154,6 @@ export default function TogetherChat({ roomId, goBack }) {
         </button>
       </div>
 
-      {/* Popup Modal */}
       {modalOpen && (
         <div
           style={{
@@ -190,12 +170,9 @@ export default function TogetherChat({ roomId, goBack }) {
           >
             <h4>👥 ผู้เข้าร่วม ({participants.length})</h4>
             <ul style={{ marginTop: 10, paddingLeft: 18 }}>
-              {participants.map((p, i) => (
-                <li key={i} style={{ marginBottom: 6 }}>{p}</li>
-              ))}
+              {participants.map((p, i) => (<li key={i} style={{ marginBottom: 6 }}>{p}</li>))}
             </ul>
 
-            {/* ปุ่มลบห้อง (เฉพาะเจ้าของ) */}
             {isOwner && (
               <div style={{ marginTop: 30, fontSize: 13 }}>
                 <button

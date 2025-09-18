@@ -24,6 +24,9 @@ import TogetherList from "./pages/TogetherList";
 
 import AiChat from "./pages/AiChat";
 import ProfilePage from "./pages/ProfilePage";
+import AchievementsPage from "./pages/AchievementsPage"; // ✅ เพิ่ม
+
+import { ensureUserStats, markFirstLogin, incUserStat, addRestaurantView } from "./lib/achievements"; // ✅ รวม import เดียว
 
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth, db } from "./firebase";
@@ -55,6 +58,9 @@ export default function App() {
         });
         setPage((p) => (p === "auth" ? "map" : p));
         setTitle("Home");
+
+        await ensureUserStats(u.uid);
+        await markFirstLogin(u.uid);
       } else {
         setUser(null);
         setPage("auth");
@@ -86,6 +92,8 @@ export default function App() {
     store_new: "Create Store",
     rest_queue: "Queue",
     mystore_queue: "Manage Tables",
+
+    achievements: "Achievements", // ✅ เพิ่ม
   };
 
   const go = (p) => {
@@ -99,10 +107,23 @@ export default function App() {
     go("map");
   };
 
-  const openRestaurant = (id) => {
+  // ✅ เปิดหน้าร้าน + นับสถิติดูร้าน + รวมวิวไปยังเจ้าของ
+  const openRestaurant = async (id) => {
     setRestId(id);
     setPrevPage(page);
     go("rest");
+
+    try {
+      const u = auth.currentUser;
+      if (u) {
+        await incUserStat(u.uid, "restaurants_viewed_count", 1);
+        const rs = await getDoc(doc(db, "restaurants", id));
+        const ownerId = rs.exists() ? rs.data().owner_id : null;
+        if (ownerId) await addRestaurantView(id, ownerId);
+      }
+    } catch (e) {
+      console.warn("stat update error:", e);
+    }
   };
 
   const openQueueManage = (id) => {
@@ -254,6 +275,10 @@ export default function App() {
         content = <ProfilePage goBack={() => go("map")} />;
         break;
 
+      case "achievements": // ✅ หน้าใหม่
+        content = <AchievementsPage goBack={() => go("map")} />;
+        break;
+
       default:
         content = <div style={{ padding: 12 }}>Not found</div>;
     }
@@ -278,7 +303,7 @@ export default function App() {
             setConfirmLogout(true);
             return;
           }
-          go(id);
+          go(id); // รวม "achievements" ไว้แล้ว
         }}
       />
 
@@ -292,6 +317,7 @@ export default function App() {
           await signOut(auth);
         }}
       />
+
       {createTogetherFor && (
         <TogetherCreateModal
           user={user}
