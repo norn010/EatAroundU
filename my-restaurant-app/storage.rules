@@ -1,0 +1,42 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // จำกัดให้เป็นไฟล์รูปและไม่เกิน 5 MB
+    function isImage() {
+      return request.resource != null
+             && request.resource.contentType.matches('image/.*')
+             && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    // === รูปโปรไฟล์ผู้ใช้ ===
+    // โครงสร้างที่ใช้: users/{uid}/photos/...
+    match /users/{uid}/{allPaths=**} {
+      // เปิดอ่านได้สาธารณะ (ถ้าอยากจำกัดให้เฉพาะผู้มี auth ให้เปลี่ยนเป็น: if request.auth != null)
+      allow read: if true;
+
+      // อนุญาตอัปโหลด/แก้ไข/ลบ เฉพาะเจ้าของ uid และต้องเป็นรูป
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && isImage();
+    }
+
+    // === รูปร้าน/เมนู ===
+    // โครงสร้างที่ใช้: restaurants/{restId}/... (เช่น cover.jpg, menus/{menuId}.jpg)
+    match /restaurants/{restId}/{allPaths=**} {
+      // เปิดอ่านได้สาธารณะ เพื่อให้รูปโชว์บนแผนที่/หน้าร้านได้
+      allow read: if true;
+
+      // ข้อจำกัด: ใน Storage Rules อ้าง owner จาก Firestore โดยตรงไม่ได้
+      // จึงอนุญาตเพียง "ผู้มี auth" + ต้องเป็นรูป เท่านั้น
+      // (ถ้าต้องการ “จำกัดเฉพาะเจ้าของร้านจริงๆ” ดูตัวเลือกเพิ่มด้านล่าง)
+      allow write: if request.auth != null
+                   && isImage();
+    }
+
+    // ปิดทุก path อื่นๆ
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

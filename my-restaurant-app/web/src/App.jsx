@@ -22,6 +22,7 @@ import TogetherChat from "./pages/TogetherChat";
 import TogetherList from "./pages/TogetherList";
 
 import AiChat from "./pages/AiChat";
+import ProfilePage from "./pages/ProfilePage";
 
 
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -44,22 +45,27 @@ export default function App() {
   const [togetherRoomId, setTogetherRoomId] = useState(null)
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        const snap = await getDoc(doc(db, "users", u.uid));
-        const profile = snap.exists() ? snap.data() : { user_type: "user" };
-        setUser({ uid: u.uid, email: u.email, ...profile });
-        setPage((p) => (p === "auth" ? "map" : p));
-        setTitle("Home");
-      } else {
-        setUser(null);
-        setPage("auth");
-        setTitle("Login");
-      }
-      setAuthReady(true);
-    });
-    return () => unsub();
-  }, []);
+  const unsub = onAuthStateChanged(auth, async (u) => {
+    if (u) {
+      const snap = await getDoc(doc(db, "users", u.uid));
+      const profile = snap.exists() ? snap.data() : { user_type: "user" };
+      // ⬇⬇⬇ สำคัญ: รวม photo_url ลงใน user state
+      setUser({
+        uid: u.uid,
+        email: u.email,
+        ...profile,               // => มี photo_url, name, country, dob
+      });
+      setPage((p) => (p === "auth" ? "map" : p));
+      setTitle("Home");
+    } else {
+      setUser(null);
+      setPage("auth");
+      setTitle("Login");
+    }
+    setAuthReady(true);
+  });
+  return () => unsub();
+}, []);
 
   const titleMap = {
     auth: "Login",
@@ -235,6 +241,11 @@ export default function App() {
 
       case "saved":
         content = <SavedPage onOpenRestaurant={openRestaurant} />;
+        break;
+
+
+      case "profile":
+        content = <ProfilePage goBack={() => go("map")} />;
         break;
 
       default:

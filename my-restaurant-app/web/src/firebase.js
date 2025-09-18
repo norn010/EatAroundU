@@ -25,7 +25,8 @@ const app = initializeApp(firebaseConfig);
 // Services
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app);
+export const storage = getStorage(app, "gs://eataroundu.firebasestorage.app");
+
 
 // Initialize the Gemini Developer API backend service
 // const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });

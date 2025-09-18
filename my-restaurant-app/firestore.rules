@@ -3,33 +3,48 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // This rule allows anyone with your Firestore database reference to view, edit,
-    // and delete all data in your Firestore database. It is useful for getting
-    // started, but it is configured to expire after 30 days because it
-    // leaves your app open to attackers. At that time, all client
-    // requests to your Firestore database will be denied.
-    //
-    // Make sure to write security rules for your app before that time, or else
-    // all client requests to your Firestore database will be denied until you Update
-    // your rules
-    match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2025, 9, 20);
-    }
+    // ========== users ==========
     match /users/{uid} {
+      // เจ้าของอ่าน/เขียนโปรไฟล์ตัวเองได้เท่านั้น
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if request.auth != null && request.auth.uid == uid;
     }
-    // อ่านร้านได้สาธารณะ
+
+    // helper: ตรวจว่าเป็นเจ้าของร้าน
+    function isOwner(restId) {
+      return request.auth != null
+        && get(/databases/$(database)/documents/restaurants/$(restId)).data.owner_id
+           == request.auth.uid;
+    }
+
+    // ========== restaurants ==========
     match /restaurants/{restId} {
+      // ใคร ๆ ก็อ่านรายละเอียดร้านได้
       allow read: if true;
 
-      // อนุญาตเขียนเฉพาะเจ้าของร้าน (owner_id ต้องเท่ากับ uid)
+      // สร้างร้าน: owner_id ในเอกสารต้องตรงกับ uid
       allow create: if request.auth != null
                     && request.resource.data.owner_id == request.auth.uid;
-      allow update, delete: if request.auth != null
-                    && resource.data.owner_id == request.auth.uid;
 
-      // subcollections menus/tables ก็ทำคล้ายกันได้
+      // แก้ไข/ลบ: ต้องเป็นเจ้าของร้าน
+      allow update, delete: if isOwner(restId);
+
+      // ----- subcollections: menus -----
+      match /menus/{menuId} {
+        allow read: if true;
+        allow create, update, delete: if isOwner(restId);
+      }
+
+      // (ถ้ามีตาราง/คิว ฯลฯ ก็ทำคล้าย ๆ กัน)
+      match /tables/{tableId} {
+        allow read: if true;
+        allow create, update, delete: if isOwner(restId);
+      }
+    }
+
+    // ปริยาย: ปฏิเสธทั้งหมด (ถ้าไม่ได้ match ข้างบน)
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
