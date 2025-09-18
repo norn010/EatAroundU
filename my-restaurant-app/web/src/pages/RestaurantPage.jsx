@@ -2,8 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { auth, db } from "../firebase";
 import {
-  doc, getDoc, setDoc, collection, query, where, orderBy, onSnapshot,
-  addDoc, updateDoc, serverTimestamp, getDocs, limit
+  doc, getDoc, setDoc, collection, query, orderBy, onSnapshot,
+  addDoc, updateDoc, serverTimestamp, limit
 } from "firebase/firestore";
 import Toast from "../components/Toast";
 
@@ -43,6 +43,47 @@ function StarRating({ value, onChange }) {
     </div>
   );
 }
+
+// ✅ ชิปแสดงระยะทาง (ปุ่มใหม่)
+function DistanceChip({ hasDistance, distanceText, onClick }) {
+  const base = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 12px",
+    borderRadius: 999,
+    fontSize: 13,
+    border: "1px solid #e6e6e6",
+    transition: "background .15s, border-color .15s",
+  };
+  const activeStyle = {
+    ...base,
+    background: "#f6f7fb",
+    color: "#111",
+    cursor: "pointer",
+  };
+  const disabledStyle = {
+    ...base,
+    background: "#f7f7f7",
+    color: "#9aa0a6",
+    cursor: "not-allowed",
+    borderColor: "#eee",
+  };
+  return (
+    <button
+      type="button"
+      onClick={hasDistance ? onClick : undefined}
+      disabled={!hasDistance}
+      style={hasDistance ? activeStyle : disabledStyle}
+      aria-label="Show distance on map"
+      title={hasDistance ? "ดูเส้นทางบนแผนที่" : "กำลังรอตำแหน่งของคุณ"}
+    >
+      <span>📍</span>
+      <span>{hasDistance ? `${distanceText} · ดูเส้นทาง` : "ดูระยะทาง"}</span>
+    </button>
+  );
+}
+
 // ---------- distance ----------
 function toRad(deg) { return deg * Math.PI / 180; }
 function haversineKm(lat1, lng1, lat2, lng2) {
@@ -55,7 +96,7 @@ function haversineKm(lat1, lng1, lat2, lng2) {
 }
 
 // ================== PAGE ==================
-export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogether }) {
+export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogether, onOpenDistanceMap }) {
   const [rest, setRest] = useState(null);
   const [menus, setMenus] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -156,47 +197,6 @@ export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogeth
     return `${km.toFixed(1)} km`;
   }, [myLoc, rest]);
 
-  // จองโต๊ะ (หาโต๊ะว่างตัวแรก)
-  async function addQueueDirect() {
-    const u = auth.currentUser;
-    if (!u) return alert("กรุณาเข้าสู่ระบบ");
-    const tbRef = collection(db, "restaurants", id, "tables");
-    const qRef = query(tbRef, where("status", "==", "available"), orderBy("table_number"), limit(1));
-    const snap = await getDocs(qRef);
-    if (snap.empty) return alert("ขอโทษค่ะ ขณะนี้ไม่มีโต๊ะว่าง");
-
-    const tdoc = snap.docs[0];
-    await updateDoc(doc(db, "restaurants", id, "tables", tdoc.id), { status: "occupied", updated_at: serverTimestamp() });
-    await addDoc(collection(db, "table_bookings"), {
-      restaurant_id: id,
-      table_id: tdoc.id,
-      user_id: u.uid,
-      reserved_at: serverTimestamp(),
-      canceled_at: null,
-      created_at: serverTimestamp()
-    });
-    alert(`จองโต๊ะหมายเลข ${tdoc.data().table_number} เรียบร้อย`);
-  }
-
-  // สร้าง Together room
-  async function createTogether() {
-    const u = auth.currentUser;
-    if (!u || !rest) return alert("กรุณาเข้าสู่ระบบ");
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
-    await addDoc(collection(db, "together_rooms"), {
-      creator_id: u.uid,
-      creator_email: u.email,
-      restaurant_id: rest.id,
-      restaurant_name: rest.name,   // <<<<<< ต้องเพิ่ม
-      meet_date: date,              // จาก input
-      meet_time: time,
-      is_private: isPrivate,
-      join_code: code,
-      created_at: serverTimestamp()
-    });
-    alert(`สร้างห้อง Together แล้ว (code: ${code})`);
-  }
-
   // ส่งรีวิว
   async function submitReview() {
     const u = auth.currentUser;
@@ -216,6 +216,8 @@ export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogeth
 
   if (loading) return <div style={{ padding: 12 }}>Loading…</div>;
   if (!rest) return <div style={{ padding: 12 }}>ไม่พบร้าน</div>;
+
+  const hasDistance = Boolean(distanceText);
 
   return (
     <div style={{ maxWidth: 500, margin: "0 auto", paddingBottom: 80 }}>
@@ -240,13 +242,19 @@ export default function RestaurantPage({ id, goBack, onOpenQueue, onCreateTogeth
           <div style={{ fontSize: 22, fontWeight: 800 }}>{rest.name}</div>
           <div style={{ display: "flex", gap: 8 }}>
             <IconBtn icon="👥" onClick={() => onCreateTogether?.(rest.id, rest.name)} />
-            <IconBtn icon="➕" label="Queue" onClick={() => onOpenQueue?.(rest.id) ?? addQueueDirect()} />
+            {/* เปิดหน้าเลือกโต๊ะ โดยไม่ fallback ไปจองอัตโนมัติ */}
+            <IconBtn icon="➕" label="Queue" onClick={() => onOpenQueue?.(rest.id)} />
             <IconBtn icon="🔖" active={fav} onClick={toggleFav} />
           </div>
         </div>
 
-        <div style={{ marginTop: 6, color: "#555", display: "flex", gap: 10, alignItems: "center" }}>
-          <span>📍 {distanceText || "—"}</span>
+        {/* ✅ แถบข้อมูลใต้ชื่อร้าน: ปุ่ม Distance แบบชิปใหม่ + เรตติ้ง + ประเภทร้าน */}
+        <div style={{ marginTop: 8, color: "#555", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <DistanceChip
+            hasDistance={hasDistance}
+            distanceText={distanceText}
+            onClick={() => rest?.id && onOpenDistanceMap?.(rest.id)}
+          />
           <span>⭐ {rest.rating?.toFixed?.(1) ?? rest.rating}</span>
           <span style={{ opacity: .7 }}>{rest.type}</span>
         </div>

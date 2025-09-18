@@ -5,7 +5,7 @@ export default function Sidebar({ open, onClose, onAction, user }) {
     : null;
   const menus = [
     { id: "map", label: "Home", icon: "🏠" },
-    { id: "random", label: "Random", icon: "🎲" },
+    // { id: "random", label: "Random", icon: "🎲" },
     { id: "profile", label: "Profile", icon: "👤" },
     { id: "together_list", label: "together", icon: "👥" },
     { id: "ai", label: "AI Chat", icon: "🤖" },

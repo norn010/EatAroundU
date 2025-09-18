@@ -1,4 +1,4 @@
-// App.jsx
+// src/App.jsx
 import { useEffect, useState } from "react";
 import Header from "./components/Header";
 import BottomNav from "./components/BottomNav";
@@ -12,6 +12,7 @@ import StoreCreate from "./pages/StoreCreate";
 import StoreEdit from "./pages/StoreEdit";
 import SavedPage from "./pages/SavedPage";
 import RestaurantPage from "./pages/RestaurantPage";
+import RestaurantDistancePage from "./pages/RestaurantDistancePage";
 import RestaurantQueuePage from "./pages/RestaurantQueuePage";
 import MyQueuePage from "./pages/MyQueuePage";
 import StoreQueueManage from "./pages/StoreQueueManage";
@@ -23,7 +24,6 @@ import TogetherList from "./pages/TogetherList";
 
 import AiChat from "./pages/AiChat";
 import ProfilePage from "./pages/ProfilePage";
-
 
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth, db } from "./firebase";
@@ -38,34 +38,32 @@ export default function App() {
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [authReady, setAuthReady] = useState(false);
 
-  // ✅ เก็บว่าเรามาจากหน้าไหน (เพื่อใช้กับปุ่ม Back)
+  // เก็บหน้าที่มา สำหรับปุ่ม back
   const [prevPage, setPrevPage] = useState("map");
-  const [createTogetherFor, setCreateTogetherFor] = useState(null); // {id,name} | null
-
-  const [togetherRoomId, setTogetherRoomId] = useState(null)
+  const [createTogetherFor, setCreateTogetherFor] = useState(null);
+  const [togetherRoomId, setTogetherRoomId] = useState(null);
 
   useEffect(() => {
-  const unsub = onAuthStateChanged(auth, async (u) => {
-    if (u) {
-      const snap = await getDoc(doc(db, "users", u.uid));
-      const profile = snap.exists() ? snap.data() : { user_type: "user" };
-      // ⬇⬇⬇ สำคัญ: รวม photo_url ลงใน user state
-      setUser({
-        uid: u.uid,
-        email: u.email,
-        ...profile,               // => มี photo_url, name, country, dob
-      });
-      setPage((p) => (p === "auth" ? "map" : p));
-      setTitle("Home");
-    } else {
-      setUser(null);
-      setPage("auth");
-      setTitle("Login");
-    }
-    setAuthReady(true);
-  });
-  return () => unsub();
-}, []);
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        const snap = await getDoc(doc(db, "users", u.uid));
+        const profile = snap.exists() ? snap.data() : { user_type: "user" };
+        setUser({
+          uid: u.uid,
+          email: u.email,
+          ...profile,
+        });
+        setPage((p) => (p === "auth" ? "map" : p));
+        setTitle("Home");
+      } else {
+        setUser(null);
+        setPage("auth");
+        setTitle("Login");
+      }
+      setAuthReady(true);
+    });
+    return () => unsub();
+  }, []);
 
   const titleMap = {
     auth: "Login",
@@ -73,6 +71,7 @@ export default function App() {
     map: "Home",
     storelist: "Store",
     rest: "Store Detail",
+    rest_distance: "Distance",
     queue: "My Queue",
     saved: "Saved",
     profile: "Profile",
@@ -82,7 +81,6 @@ export default function App() {
     together_chat: "Together Chat",
     ai: "AI Chat",
     setting: "Setting",
-
 
     mystore: "My Store",
     store_new: "Create Store",
@@ -101,23 +99,22 @@ export default function App() {
     go("map");
   };
 
-  // ✅ ฟังก์ชันมาตรฐาน เวลาเปิดหน้าร้าน
   const openRestaurant = (id) => {
     setRestId(id);
-    setPrevPage(page); // จำหน้าที่มาด้วย (map/storelist/mystore)
+    setPrevPage(page);
     go("rest");
   };
-  // เปิดหน้า queue manage (owner)
+
   const openQueueManage = (id) => {
     setRestId(id);
     setPrevPage(page);
     go("mystore_queue");
   };
+
   const handleCreateTogether = (restId, restName) => {
     setCreateTogetherFor({ id: restId, name: restName });
   };
 
-  // ---- Render page เดียวในคราวเดียว ----
   let content = null;
   if (!authReady) {
     content = <div style={{ padding: 12 }}>Loading…</div>;
@@ -143,7 +140,6 @@ export default function App() {
         content = <StoreList onOpenStore={openRestaurant} />;
         break;
 
-      // ✅ หน้ารายการ “ร้านของฉัน” (owner เท่านั้น)
       case "mystore":
         content = (
           <MyStoreList
@@ -151,7 +147,7 @@ export default function App() {
             onNewStore={() => go("store_new")}
             onOpenStore={openRestaurant}
             onEditStore={(id) => { setRestId(id); go("store_edit"); }}
-            onQueueManage={openQueueManage}                           // ✅ ส่งเข้าไป
+            onQueueManage={openQueueManage}
           />
         );
         break;
@@ -166,7 +162,6 @@ export default function App() {
         );
         break;
 
-      // ✅ หน้าเพิ่มร้านใหม่ (owner เท่านั้น)
       case "store_new":
         content = (
           <StoreCreate
@@ -182,13 +177,24 @@ export default function App() {
           <RestaurantPage
             id={restId}
             goBack={() => go(prevPage)}
-            onOpenQueue={(rid) => { setRestId(rid); go("queue_rest"); }}
+            onOpenQueue={(rid) => { setRestId(rid); go("rest_queue"); }}
             onCreateTogether={(rid, rname) => handleCreateTogether(rid, rname)}
+            onOpenDistanceMap={(rid) => { setRestId(rid); go("rest_distance"); }}
           />
         );
         break;
 
-      case "rest_queue":   // ✅ หน้า queue ของร้าน
+      case "rest_distance":
+        content = (
+          <RestaurantDistancePage
+            restId={restId}
+            goBack={() => go("rest")}
+            setTitle={setTitle}
+          />
+        );
+        break;
+
+      case "rest_queue":
         content = (
           <RestaurantQueuePage
             restId={restId}
@@ -209,6 +215,7 @@ export default function App() {
           />
         );
         break;
+
       case "together_chat":
         content = (
           <TogetherChat
@@ -217,6 +224,7 @@ export default function App() {
           />
         );
         break;
+
       case "ai":
         content = (
           <AiChat
@@ -224,12 +232,13 @@ export default function App() {
           />
         );
         break;
+
       case "together_list":
         content = (
           <TogetherList
             user={user}
             onEnterRoom={(roomId) => {
-              setTogetherRoomId(roomId);   // ✅ เก็บ roomId
+              setTogetherRoomId(roomId);
               setPrevPage("together_list");
               go("together_chat");
             }}
@@ -237,12 +246,9 @@ export default function App() {
         );
         break;
 
-
-
       case "saved":
         content = <SavedPage onOpenRestaurant={openRestaurant} />;
         break;
-
 
       case "profile":
         content = <ProfilePage goBack={() => go("map")} />;
@@ -272,7 +278,7 @@ export default function App() {
             setConfirmLogout(true);
             return;
           }
-          go(id); // จะไปหน้า together_list ได้เลย
+          go(id);
         }}
       />
 
@@ -299,9 +305,6 @@ export default function App() {
           }}
         />
       )}
-
     </>
-
   );
-
 }
